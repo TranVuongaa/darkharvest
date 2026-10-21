@@ -50,7 +50,7 @@ Requirements:
   ├── README.md
   ├── requirements.txt
   ├── scrape.py          # CLI entrypoint
-  ├── optisigns/
+  ├── src/
   │   ├── client.py      # API fetch + pagination + retries
   │   ├── convert.py     # HTML -> clean Markdown
   │   └── slug.py

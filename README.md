@@ -1,6 +1,6 @@
-# OptiSigns Markdown export
+# X Markdown export
 
-Export the public English OptiSigns Help Center to one Markdown file per article.
+Export the public English X Help Center to one Markdown file per article.
 Requires Python 3.11+; no API key or authentication is needed.
 
 ## Setup and run
