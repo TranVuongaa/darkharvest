@@ -44,8 +44,9 @@ arguments override these settings for a single run.
 - BeautifulSoup removes unwanted elements and 1×1 images; markdownify produces
   ATX headings, lists, tables, links, and images. Code blocks are protected and
   fenced with enough backticks to contain literal backticks safely.
-- Filenames use normalized Unicode titles plus article IDs. Repeated runs
-  overwrite atomically. Renamed articles remove their prior ID-suffixed file.
+- Filenames use normalized Unicode titles plus article IDs. New and changed
+  files are written atomically; unchanged files are not rewritten. Renamed
+  articles remove their prior ID-suffixed file.
 - Front matter records title, source URL, ID, and update timestamp. Each file has
   a top-level title, and relative URLs remain relative.
 - Each article logs its ID, slug, and UTF-8 byte count. Drafts and duplicate IDs
@@ -53,7 +54,20 @@ arguments override these settings for a single run.
   stop pagination, retain completed files, and produce a nonzero exit status.
   Summary `fetched` counts encountered records and never exceeds `--limit`;
   `failed` also includes fetch
-  failures; `written` counts successful exports.
+  failures; `written` counts files actually created or updated.
+- Each successful export also reports `status=new`, `updated`, or `unchanged`.
+  The exporter matches existing files by article ID (including renamed titles)
+  and compares SHA-256 hashes of the complete UTF-8 Markdown, including front
+  matter. Missing files are `new`; different hashes are `updated`; matching
+  hashes are `unchanged`. A timestamp-only metadata change counts as an update,
+  and content changes are detected even when `updated_at` stays the same.
+  The summary includes all three status counts. `new + updated` equals
+  `written`; unchanged files retain their existing contents and timestamps.
+  Counts cover only articles processed in this run and use the selected output
+  directory as the baseline; an empty directory makes every export `new`.
+
+  Example repeat run:
+  `Summary: fetched=5 skipped=0 failed=0 written=0 new=0 updated=0 unchanged=5`
 
 ## Limitations
 

@@ -1,4 +1,5 @@
 from pathlib import Path
+import os
 import tempfile
 import unittest
 from unittest.mock import Mock, patch
@@ -162,11 +163,56 @@ class CliTests(unittest.TestCase):
                  self.assertLogs(level="INFO") as logs:
                 self.assertEqual(scrape.main(), 1)
             self.assertIn("fetched=4 skipped=2 failed=1 written=1", logs.output[-1])
+            self.assertIn("new=1 updated=0 unchanged=0", logs.output[-1])
             with patch("sys.argv", ["scrape.py", "--out", directory]), \
                  patch("scrape.iter_articles", return_value=iter([dict(good, title="Renamed")])), \
+                 self.assertLogs(level="INFO") as logs:
+                self.assertEqual(scrape.main(), 0)
+            self.assertIn("new=0 updated=1 unchanged=0", logs.output[-1])
+            self.assertEqual([p.name for p in Path(directory).iterdir()], ["renamed-1.md"])
+
+    def test_hash_comparison_across_runs(self):
+        article = dict(id=1, title="Example", body="<p>Body</p>",
+                       html_url="https://example.org/1", updated_at="2026-10-20")
+        changed = dict(article, body="<p>Changed body, same timestamp</p>")
+        cases = [
+            (article, 1, "new=1 updated=0 unchanged=0"),
+            (article, 0, "new=0 updated=0 unchanged=1"),
+            (changed, 1, "new=0 updated=1 unchanged=0"),
+            (changed, 0, "new=0 updated=0 unchanged=1"),
+            (dict(changed, updated_at="2026-10-21"), 1, "new=0 updated=1 unchanged=0"),
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            for current, written, expected in cases:
+                with self.subTest(expected=expected, article=current), \
+                     patch("sys.argv", ["scrape.py", "--out", directory]), \
+                     patch("scrape.iter_articles", return_value=iter([current])), \
+                     self.assertLogs(level="INFO") as logs:
+                    self.assertEqual(scrape.main(), 0)
+                self.assertIn(f"written={written} " + expected, logs.output[-1])
+                self.assertIn("status=" + expected.split("=1")[0].split()[-1], logs.output[0])
+
+    def test_unchanged_file_is_not_rewritten(self):
+        article = dict(id=1, title="Example", body="<p>Body</p>",
+                       html_url="https://example.org/1", updated_at="2026-10-20")
+        with tempfile.TemporaryDirectory() as directory:
+            arguments = ["scrape.py", "--out", directory]
+            with patch("sys.argv", arguments), \
+                 patch("scrape.iter_articles", return_value=iter([article])), \
                  self.assertLogs(level="INFO"):
                 self.assertEqual(scrape.main(), 0)
-            self.assertEqual([p.name for p in Path(directory).iterdir()], ["renamed-1.md"])
+
+            target = Path(directory) / "example-1.md"
+            fixed_time = 1_600_000_000_000_000_000
+            os.utime(target, ns=(fixed_time, fixed_time))
+
+            with patch("sys.argv", arguments), \
+                 patch("scrape.iter_articles", return_value=iter([article])), \
+                 self.assertLogs(level="INFO") as logs:
+                self.assertEqual(scrape.main(), 0)
+
+            self.assertEqual(target.stat().st_mtime_ns, fixed_time)
+            self.assertIn("written=0 new=0 updated=0 unchanged=1", logs.output[-1])
 
     def test_passes_limit_to_client(self):
         with tempfile.TemporaryDirectory() as directory:
