@@ -11,7 +11,7 @@ from src.convert import article_to_markdown
 from src.slug import article_slug
 
 # Edit these settings, then run: python scrape.py
-LIMIT = 6  # All articles; use a positive integer such as 30 for a limit.
+LIMIT = 8  # All articles; use a positive integer such as 30 for a limit.
 OUT_DIR = "out"  # Output folder, relative to your current working directory.
 LOG_PATH = "logs/scraper.log"  # Append logs from every run.
 
