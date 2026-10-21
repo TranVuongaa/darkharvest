@@ -39,11 +39,19 @@ class UploadTests(unittest.TestCase):
         return synchronize(self.client, 'vs-test', paths or [self.path])
 
     def test_one_file_exact_bytes_and_rerun_skips(self):
-        self.assertEqual(self.sync(), dict(uploaded=1, skipped=0, failed=0,
+        self.assertEqual(self.sync(), dict(added=1, updated=0, uploaded=1, skipped=0, failed=0,
                                            embedded_files=1, embedded_chunks_estimated=1))
         self.assertEqual(self.client.files.create.call_args.kwargs['file'][1], self.content)
-        self.assertEqual(self.sync(), dict(uploaded=0, skipped=1, failed=0,
+        self.assertEqual(self.sync(), dict(added=0, updated=0, uploaded=0, skipped=1, failed=0,
                                            embedded_files=0, embedded_chunks_estimated=0))
+        self.client.files.create.assert_called_once()
+
+    def test_fresh_directory_reuses_remote_metadata(self):
+        self.sync()
+        with tempfile.TemporaryDirectory() as directory:
+            fresh = Path(directory) / self.path.name
+            fresh.write_bytes(self.content)
+            self.assertEqual(self.sync([fresh])['skipped'], 1)
         self.client.files.create.assert_called_once()
 
     def test_chunk_estimate_boundaries(self):
@@ -77,7 +85,10 @@ class UploadTests(unittest.TestCase):
         self.sync()
         old = self.remote[0]
         self.path.write_bytes(self.content + b'New text\n')
-        self.assertEqual(self.sync()['uploaded'], 1)
+        counts = self.sync()
+        self.assertEqual(counts['uploaded'], 1)
+        self.assertEqual(counts['updated'], 1)
+        self.assertEqual(counts['added'], 0)
         self.assertEqual(len(self.remote), 1)
         self.assertNotEqual(self.remote[0].id, old.id)
         self.client.files.delete.assert_not_called()
@@ -95,7 +106,7 @@ class UploadTests(unittest.TestCase):
         ]
         with self.assertLogs('optibot.ingestion', level='ERROR'):
             result = self.sync([self.path, other])
-        self.assertEqual(result, dict(uploaded=1, skipped=0, failed=1,
+        self.assertEqual(result, dict(added=0, updated=1, uploaded=1, skipped=0, failed=1,
                                       embedded_files=1, embedded_chunks_estimated=1))
         self.assertIn(old, self.remote)
         self.client.files.delete.assert_called_once()
@@ -131,14 +142,23 @@ class UploadTests(unittest.TestCase):
             self.sync([self.path, other])
         self.client.files.create.assert_not_called()
 
-    def test_store_persisted_and_reused(self):
-        state = self.root / 'state.json'
-        self.client.vector_stores.create.return_value.id = 'vs-test'
-        self.assertEqual(resolve_store(self.client, state, None), 'vs-test')
-        self.assertEqual(resolve_store(self.client, state, None), 'vs-test')
-        self.client.vector_stores.create.assert_called_once()
-        with self.assertRaises(ValueError):
-            resolve_store(self.client, state, 'vs-other')
+    def test_store_comes_only_from_configuration(self):
+        self.assertEqual(resolve_store(self.client, ' vs-configured '), 'vs-configured')
+        self.client.vector_stores.retrieve.assert_called_once_with('vs-configured')
+        self.client.vector_stores.create.assert_not_called()
+
+    def test_missing_store_does_not_create_or_reuse_one(self):
+        for value in (None, '', '   '):
+            with self.subTest(value=value), self.assertRaisesRegex(ValueError, 'OPENAI_VECTOR_STORE_ID'):
+                resolve_store(self.client, value)
+        self.client.vector_stores.retrieve.assert_not_called()
+        self.client.vector_stores.create.assert_not_called()
+
+    def test_invalid_store_does_not_create_replacement(self):
+        self.client.vector_stores.retrieve.side_effect = RuntimeError('store not found')
+        with self.assertRaisesRegex(RuntimeError, 'store not found'):
+            resolve_store(self.client, 'vs-invalid')
+        self.client.vector_stores.create.assert_not_called()
 
 
 if __name__ == '__main__':

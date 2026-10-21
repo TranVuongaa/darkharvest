@@ -4,14 +4,16 @@
 import argparse
 import hashlib
 import logging
+import os
 from pathlib import Path
+
+from dotenv import load_dotenv
 
 from src.client import iter_articles, make_session
 from src.convert import article_to_markdown
 from src.slug import article_slug
 
 # Edit these settings, then run: python scrape.py
-LIMIT = 8  # All articles; use a positive integer such as 30 for a limit.
 OUT_DIR = "out"  # Output folder, relative to your current working directory.
 LOG_PATH = "logs/scraper.log"  # Append logs from every run.
 
@@ -42,8 +44,11 @@ def article_status(target, article_id, data):
 
 
 def main():
+    load_dotenv(Path(__file__).resolve().parent / ".env")
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--limit", type=positive_int, default=LIMIT)
+    parser.add_argument("--limit", type=positive_int,
+                        default=os.getenv("LIMIT", "").strip() or None,
+                        help="Override LIMIT from the environment (blank means all articles)")
     parser.add_argument("--out", type=Path, default=Path(OUT_DIR))
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(message)s")

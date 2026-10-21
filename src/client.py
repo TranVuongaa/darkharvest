@@ -5,7 +5,7 @@ from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
 ARTICLES_URL = (
-    "https://support.optisigns.com/api/v2/help_center/en-us/articles.json?page[size]=10"
+    "https://support.optisigns.com/api/v2/help_center/en-us/articles.json?page[size]=100"
 )
 
 

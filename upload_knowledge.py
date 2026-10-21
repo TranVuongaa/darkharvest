@@ -14,13 +14,6 @@ from dotenv import load_dotenv
 from openai import OpenAI
 import tiktoken
 
-# Settings are strings loaded from .env (existing environment values take precedence).
-load_dotenv()
-ARTICLES_DIR = os.getenv("ARTICLES_DIR", "articles")
-INGESTION_LOG_PATH = os.getenv("INGESTION_LOG_PATH", "logs/ingestion.log")
-INGESTION_STATE_PATH = os.getenv("INGESTION_STATE_PATH", ".ingestion-state.json")
-OPENAI_VECTOR_STORE_ID = os.getenv("OPENAI_VECTOR_STORE_ID") or None
-
 LOG = logging.getLogger("optibot.ingestion")
 MANAGER = "optibot-articles-v1"
 CHUNK_SIZE = 800
@@ -49,11 +42,11 @@ def article_key(path: Path) -> str:
 
 
 def synchronize(client, store_id: str, articles: list[Path]) -> dict[str, int]:
-    counts = dict(uploaded=0, skipped=0, failed=0,
+    counts = dict(added=0, updated=0, uploaded=0, skipped=0, failed=0,
                   embedded_files=0, embedded_chunks_estimated=0)
     existing = defaultdict(list)
-    # SDK iteration follows every page. Only touch files owned by this uploader.
-    for file in client.vector_stores.files.list(vector_store_id=store_id):
+    # Fetch metadata only, 100 per page; SDK iteration follows every page.
+    for file in client.vector_stores.files.list(vector_store_id=store_id, limit=100):
         attrs = file.attributes or {}
         if attrs.get("manager") == MANAGER:
             existing[attrs.get("article_key")].append(file)
@@ -114,6 +107,8 @@ def synchronize(client, store_id: str, articles: list[Path]) -> dict[str, int]:
                 if old.id != current.id:
                     client.vector_stores.files.delete(old.id, vector_store_id=store_id)
             counts[action] += 1
+            if action == "uploaded":
+                counts["updated" if previous else "added"] += 1
             LOG.info("id=%s file=%s bytes=%d status=%s", key, path.name, len(content), action)
         except Exception:
             counts["failed"] += 1
@@ -121,28 +116,22 @@ def synchronize(client, store_id: str, articles: list[Path]) -> dict[str, int]:
     return counts
 
 
-def resolve_store(client, state_path: Path, requested: str | None) -> str:
-    state = json.loads(state_path.read_text()) if state_path.exists() else {}
-    saved = state.get("vector_store_id")
-    if requested and saved and requested != saved:
-        raise ValueError("Store differs from saved state; use a different INGESTION_STATE_PATH")
-    store_id = requested or saved
-    if store_id:
-        client.vector_stores.retrieve(store_id)
-    else:
-        store_id = client.vector_stores.create(name="OptiBot Support Knowledge Base").id
-    # Save before uploading so a failed run reuses the same store next time.
+def resolve_store(client, requested: str | None) -> str:
+    store_id = (requested or "").strip()
+    if not store_id:
+        raise ValueError("Set OPENAI_VECTOR_STORE_ID in .env or the environment")
+    client.vector_stores.retrieve(store_id)
     LOG.info("Vector Store ID: %s", store_id)
-    temporary = state_path.with_name(state_path.name + ".tmp")
-    temporary.write_text(json.dumps({"vector_store_id": store_id}) + "\n", encoding="utf-8")
-    temporary.replace(state_path)
     return store_id
 
 
 def main():
-    articles_dir = Path(ARTICLES_DIR)
-    log_path = Path(INGESTION_LOG_PATH)
-    state_path = Path(INGESTION_STATE_PATH)
+    load_dotenv(Path(__file__).resolve().parent / ".env")
+    requested = os.getenv("OPENAI_VECTOR_STORE_ID", "").strip()
+    if not requested:
+        raise SystemExit("Set OPENAI_VECTOR_STORE_ID in .env or the environment")
+    articles_dir = Path(os.getenv("ARTICLES_DIR", "articles"))
+    log_path = Path(os.getenv("INGESTION_LOG_PATH", "logs/ingestion.log"))
     log_path.parent.mkdir(parents=True, exist_ok=True)
     logging.basicConfig(
         level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s",
@@ -151,20 +140,24 @@ def main():
     articles = sorted(articles_dir.glob("*.md"))
     if not articles:
         raise SystemExit(f"No Markdown files found in {articles_dir.resolve()}")
-    state_path.parent.mkdir(parents=True, exist_ok=True)
-    # Avoid simultaneous runs using this state file uploading the same articles.
-    with state_path.with_name(state_path.name + ".lock").open("a") as lock:
+    # Coordinate local uploaders reading the same article directory.
+    with (articles_dir / ".upload.lock").open("a") as lock:
         try:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
-            raise SystemExit("Another uploader is using this state file") from None
+            raise SystemExit("Another uploader is using this article directory") from None
         with OpenAI(timeout=60, max_retries=5) as client:
-            store_id = resolve_store(client, state_path, OPENAI_VECTOR_STORE_ID)
+            store_id = resolve_store(client, requested)
             counts = synchronize(client, store_id, articles)
     LOG.info("Summary: articles=%d uploaded=%d skipped=%d failed=%d "
              "embedded_files=%d embedded_chunks_estimated=%d vector_store_id=%s",
              len(articles), counts["uploaded"], counts["skipped"], counts["failed"],
              counts["embedded_files"], counts["embedded_chunks_estimated"], store_id)
+    LOG.info("Delta: added=%d updated=%d skipped=%d failed=%d",
+             counts["added"], counts["updated"], counts["skipped"], counts["failed"])
+    summary_path = os.getenv("UPLOAD_SUMMARY_PATH")
+    if summary_path:
+        Path(summary_path).write_text(json.dumps({**counts, "vector_store_id": store_id}) + "\n")
     print(f"Vector Store ID: {store_id}")
     if counts["failed"]:
         raise SystemExit(1)

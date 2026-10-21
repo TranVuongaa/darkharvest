@@ -1,0 +1,7 @@
+**
+!requirements.txt
+!main.py
+!scrape.py
+!upload_knowledge.py
+!src/
+!src/*.py
