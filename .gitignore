@@ -2,3 +2,6 @@
 __pycache__/
 out/
 *.pyc
+.env
+logs/
+.ingestion-state.json*

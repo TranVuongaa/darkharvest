@@ -103,3 +103,70 @@ After switching to cursor pagination, a full export to a temporary directory on
 2026-10-21 again wrote 415 articles, with 0 skipped and 0 failed. All files had
 title headings. Pagination tests cover multiple pages, an empty terminal page,
 stopping on `has_more=false` even with a next link, and malformed pagination.
+
+## Upload articles to OpenAI
+
+Install `requirements.txt` again to include the pinned OpenAI SDK and dotenv
+packages. The uploader requires an OpenAI API key, unlike the public scraper.
+Set `OPENAI_API_KEY` in your environment or a local `.env` file, then run:
+
+```sh
+python -m pip install -r requirements.txt
+python upload_knowledge.py
+```
+
+Copy `.env.example` to `.env` if you do not already have one; otherwise merge
+its settings into your existing `.env`. Set your API key and configure:
+
+```dotenv
+INPUT_DIR="out"
+LOG_PATH="logs/ingestion.log"
+STATE_PATH=".ingestion-state.json"
+VECTOR_STORE_ID=""
+```
+
+Settings are loaded as strings. Existing environment values take precedence
+over `.env` values.
+
+Paths are relative to your current working directory.
+
+The first run creates a vector store and saves its ID in
+`.ingestion-state.json` before uploading. Keep this file: subsequent runs reuse
+that store. The ID is also printed and recorded in `logs/ingestion.log`.
+To select an existing store on the first run, set `VECTOR_STORE_ID` in `.env`
+or your environment. `OPENAI_VECTOR_STORE_ID` remains supported as a fallback.
+When both are blank or unset, saved state is used.
+A store conflicting with saved state is rejected; use a separate `STATE_PATH`
+when intentionally targeting another store.
+
+Each Markdown article is uploaded as **one file**, byte for byte, preserving
+front matter (including `source`), relative links and code whitespace. OpenAI
+handles retrieval chunking internally. There are no separate `_1.md`, `_2.md`
+chunk uploads. Remote attributes record the stable article ID from the filename,
+the SHA-256 content hash, and the uploader's ownership marker. SDK pagination
+checks all existing attachments. Unchanged completed files are skipped; changed
+articles are indexed successfully before old managed versions are detached.
+Filenames without an ID suffix use the whole filename as their identity.
+Duplicate local IDs are rejected instead of uploading conflicting copies.
+
+Failures are logged per article and produce a nonzero exit status while other
+articles continue. Reruns retry failed articles and unfinished replacement
+cleanup. The SDK retries transient requests, and indexing polling has a
+five-minute limit per article. A local file lock prevents overlapping runs
+using the same state path (macOS/Linux). Do not run multiple machines or
+separate state files against the same store concurrently.
+
+Older uploads from the previous chunk-based script have no ownership metadata
+and are left untouched, even when selecting their existing store. For a clean
+migration, use a new store and configure your application with its printed ID.
+Old stores and chunk uploads are not automatically deleted. Replacement only
+detaches old files from this store; it does not delete the underlying account
+files, which could be used elsewhere. Articles removed locally are not pruned.
+A process kill or ambiguous network response during file creation may leave an
+unattached account file; local locking and hash checks do not make remote
+operations transactional. Losing the state file without supplying the store ID
+will create another store.
+
+Uploader verification is offline with a mocked SDK: byte preservation, repeated
+runs, renamed and changed articles, failure isolation, interrupted replacement,
+legacy-file preservation, duplicate input IDs, and saved store reuse.
