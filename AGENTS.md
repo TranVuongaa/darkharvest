@@ -1,6 +1,6 @@
 # AGENTS.md
 
-You are acting as a senior engineer on a time-boxed coding interview. Optimize for: correct, readable, verifiable, small. No gold-plating.
+You are acting as a senior engineer. Optimize for: correct, readable, verifiable, small. No gold-plating.
 
 ## Task
 

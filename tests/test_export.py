@@ -68,6 +68,39 @@ class ClientTests(unittest.TestCase):
         for call in session.get.call_args_list:
             self.assertEqual(call.kwargs["timeout"], (10, 60))
 
+    def test_limit_stops_across_pages(self):
+        session = Mock()
+        session.get.side_effect = [
+            Mock(json=Mock(return_value={
+                "articles": [{"id": 1}, {"id": 2}], "meta": {"has_more": True},
+                "links": {"next": "https://example.org/page-2"},
+            })),
+            Mock(json=Mock(return_value={
+                "articles": [{"id": 3}, {"id": 4}], "meta": {"has_more": True},
+                "links": {"next": "https://example.org/page-3"},
+            })),
+        ]
+
+        self.assertEqual(
+            list(iter_articles(session, limit=3)),
+            [{"id": 1}, {"id": 2}, {"id": 3}],
+        )
+        self.assertEqual(session.get.call_count, 2)
+
+    def test_limit_stops_before_fetching_next_page(self):
+        session = Mock()
+        session.get.return_value.json.return_value = {
+            "articles": [{"id": 1}, {"id": 2}], "meta": {"has_more": True},
+            "links": {"next": "https://example.org/page-2"},
+        }
+
+        self.assertEqual(list(iter_articles(session, limit=2)), [{"id": 1}, {"id": 2}])
+        self.assertEqual(session.get.call_count, 1)
+
+    def test_invalid_limit(self):
+        with self.assertRaisesRegex(ValueError, "limit must be at least 1"):
+            list(iter_articles(Mock(), limit=0))
+
     def test_pagination_loop(self):
         session = Mock()
         session.get.return_value.json.return_value = {
@@ -134,6 +167,15 @@ class CliTests(unittest.TestCase):
                  self.assertLogs(level="INFO"):
                 self.assertEqual(scrape.main(), 0)
             self.assertEqual([p.name for p in Path(directory).iterdir()], ["renamed-1.md"])
+
+    def test_passes_limit_to_client(self):
+        with tempfile.TemporaryDirectory() as directory:
+            with patch("sys.argv", ["scrape.py", "--limit", "3", "--out", directory]), \
+                 patch("scrape.iter_articles", return_value=iter([])) as articles, \
+                 self.assertLogs(level="INFO"):
+                self.assertEqual(scrape.main(), 0)
+
+        articles.assert_called_once_with(unittest.mock.ANY, limit=3)
 
 
 if __name__ == "__main__":

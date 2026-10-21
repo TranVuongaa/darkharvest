@@ -10,7 +10,7 @@ from src.convert import article_to_markdown
 from src.slug import article_slug
 
 # Edit these settings, then run: python scrape.py
-LIMIT = None  # All articles; use a positive integer such as 30 for a limit.
+LIMIT = 5  # All articles; use a positive integer such as 30 for a limit.
 OUT_DIR = "out"  # Output folder, relative to your current working directory.
 
 LOG = logging.getLogger(__name__)
@@ -34,7 +34,7 @@ def main():
     seen = set()
     try:
         with make_session() as session:
-            for article in iter_articles(session):
+            for article in iter_articles(session, limit=args.limit):
                 fetched += 1
                 try:
                     article_id = article["id"]
@@ -58,8 +58,6 @@ def main():
                 except Exception:
                     failed += 1
                     LOG.exception("id=%s failed", article.get("id", "unknown"))
-                if args.limit is not None and written >= args.limit:
-                    break
     except Exception:
         failed += 1
         LOG.exception("API fetch failed; existing output retained")

@@ -23,8 +23,12 @@ def make_session():
     return session
 
 
-def iter_articles(session, url=ARTICLES_URL):
+def iter_articles(session, url=ARTICLES_URL, limit=None):
+    if limit is not None and limit < 1:
+        raise ValueError("limit must be at least 1")
+
     seen = set()
+    yielded = 0
     while url:
         if url in seen:
             raise ValueError(f"Pagination loop: {url}")
@@ -34,7 +38,11 @@ def iter_articles(session, url=ARTICLES_URL):
         page = response.json()
         if not isinstance(page.get("articles"), list):
             raise ValueError("API response is missing an articles list")
-        yield from page["articles"]
+        for article in page["articles"]:
+            yield article
+            yielded += 1
+            if limit is not None and yielded >= limit:
+                return
         has_more = page["meta"]["has_more"]
         if not isinstance(has_more, bool):
             raise ValueError("API response has an invalid meta.has_more value")

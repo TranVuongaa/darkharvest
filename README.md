@@ -15,7 +15,8 @@ python -m unittest discover -s tests -v
 ```
 
 Use any installed Python 3.11+ for the first command (this workspace was verified
-with `python3.14`). The default is all articles; `--limit` counts successful writes.
+with `python3.14`). The default is all articles; `--limit` caps the number of API
+articles processed.
 Output is UTF-8 and `out/` is gitignored.
 
 To configure the run directly in `scrape.py`, edit the settings near the top:
@@ -50,7 +51,8 @@ arguments override these settings for a single run.
 - Each article logs its ID, slug, and UTF-8 byte count. Drafts and duplicate IDs
   are skipped. An article failure does not stop later articles. Fetch failures
   stop pagination, retain completed files, and produce a nonzero exit status.
-  Summary `fetched` counts encountered records; `failed` also includes fetch
+  Summary `fetched` counts encountered records and never exceeds `--limit`;
+  `failed` also includes fetch
   failures; `written` counts successful exports.
 
 ## Limitations
