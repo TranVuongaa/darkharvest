@@ -106,12 +106,27 @@ stopping on `has_more=false` even with a next link, and malformed pagination.
 
 ## Upload articles to OpenAI
 
+Run both steps in sequence with:
+
+```sh
+python main.py
+python main.py --limit 30
+```
+
+`main.py` loads `.env` beside the script and uses `ARTICLES_DIR` (default:
+`articles`) for both export and upload. Relative paths remain relative to your
+current working directory. Without `--limit`, it uses the current `LIMIT` in
+`scrape.py`. Upload starts only if scraping succeeds; failures from either step
+produce a nonzero exit status. Upload processes all Markdown files in
+`ARTICLES_DIR`, including files from previous exports.
+
 Install `requirements.txt` again to include the pinned OpenAI SDK and dotenv
 packages. The uploader requires an OpenAI API key, unlike the public scraper.
 Set `OPENAI_API_KEY` in your environment or a local `.env` file, then run:
 
 ```sh
 python -m pip install -r requirements.txt
+python scrape.py --out articles/
 python upload_knowledge.py
 ```
 
@@ -119,24 +134,27 @@ Copy `.env.example` to `.env` if you do not already have one; otherwise merge
 its settings into your existing `.env`. Set your API key and configure:
 
 ```dotenv
-INPUT_DIR="out"
-LOG_PATH="logs/ingestion.log"
-STATE_PATH=".ingestion-state.json"
-VECTOR_STORE_ID=""
+ARTICLES_DIR="articles"
+INGESTION_LOG_PATH="logs/ingestion.log"
+INGESTION_STATE_PATH=".ingestion-state.json"
+OPENAI_VECTOR_STORE_ID=""
 ```
 
 Settings are loaded as strings. Existing environment values take precedence
 over `.env` values.
 
-Paths are relative to your current working directory.
+Paths are relative to your current working directory. `ARTICLES_DIR` contains
+the Markdown articles to upload; `INGESTION_LOG_PATH` is the uploader log file,
+and `INGESTION_STATE_PATH` stores the vector store ID between runs.
+The generated `articles/` directory is gitignored.
 
 The first run creates a vector store and saves its ID in
 `.ingestion-state.json` before uploading. Keep this file: subsequent runs reuse
 that store. The ID is also printed and recorded in `logs/ingestion.log`.
-To select an existing store on the first run, set `VECTOR_STORE_ID` in `.env`
-or your environment. `OPENAI_VECTOR_STORE_ID` remains supported as a fallback.
-When both are blank or unset, saved state is used.
-A store conflicting with saved state is rejected; use a separate `STATE_PATH`
+To select an existing store on the first run, set `OPENAI_VECTOR_STORE_ID` in `.env`
+or your environment.
+When this setting is blank or unset, saved state is used.
+A store conflicting with saved state is rejected; use a separate `INGESTION_STATE_PATH`
 when intentionally targeting another store.
 
 Each Markdown article is uploaded as **one file**, byte for byte, preserving

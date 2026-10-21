@@ -5,3 +5,4 @@ out/
 .env
 logs/
 .ingestion-state.json*
+articles/

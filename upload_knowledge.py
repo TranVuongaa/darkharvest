@@ -15,10 +15,10 @@ from openai import OpenAI
 
 # Settings are strings loaded from .env (existing environment values take precedence).
 load_dotenv()
-INPUT_DIR = os.getenv("INPUT_DIR", "out")
-LOG_PATH = os.getenv("LOG_PATH", "logs/ingestion.log")
-STATE_PATH = os.getenv("STATE_PATH", ".ingestion-state.json")
-VECTOR_STORE_ID = os.getenv("VECTOR_STORE_ID") or os.getenv("OPENAI_VECTOR_STORE_ID") or None
+ARTICLES_DIR = os.getenv("ARTICLES_DIR", "articles")
+INGESTION_LOG_PATH = os.getenv("INGESTION_LOG_PATH", "logs/ingestion.log")
+INGESTION_STATE_PATH = os.getenv("INGESTION_STATE_PATH", ".ingestion-state.json")
+OPENAI_VECTOR_STORE_ID = os.getenv("OPENAI_VECTOR_STORE_ID") or None
 
 LOG = logging.getLogger("optibot.ingestion")
 MANAGER = "optibot-articles-v1"
@@ -75,8 +75,6 @@ def synchronize(client, store_id: str, articles: list[Path]) -> dict[str, int]:
                             f"Indexing status={current.status}: {current.last_error}"
                         )
                 except Exception:
-                    # This new file belongs solely to this attempt. Old indexed
-                    # versions stay available when upload/indexing fails.
                     try:
                         client.files.delete(uploaded.id)
                     except Exception:
@@ -101,7 +99,7 @@ def resolve_store(client, state_path: Path, requested: str | None) -> str:
     state = json.loads(state_path.read_text()) if state_path.exists() else {}
     saved = state.get("vector_store_id")
     if requested and saved and requested != saved:
-        raise ValueError("Store differs from saved state; use a different STATE_PATH")
+        raise ValueError("Store differs from saved state; use a different INGESTION_STATE_PATH")
     store_id = requested or saved
     if store_id:
         client.vector_stores.retrieve(store_id)
@@ -116,17 +114,17 @@ def resolve_store(client, state_path: Path, requested: str | None) -> str:
 
 
 def main():
-    input_dir = Path(INPUT_DIR)
-    log_path = Path(LOG_PATH)
-    state_path = Path(STATE_PATH)
+    articles_dir = Path(ARTICLES_DIR)
+    log_path = Path(INGESTION_LOG_PATH)
+    state_path = Path(INGESTION_STATE_PATH)
     log_path.parent.mkdir(parents=True, exist_ok=True)
     logging.basicConfig(
         level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s",
         handlers=[logging.StreamHandler(), logging.FileHandler(log_path, encoding="utf-8")],
     )
-    articles = sorted(input_dir.glob("*.md"))
+    articles = sorted(articles_dir.glob("*.md"))
     if not articles:
-        raise SystemExit(f"No Markdown files found in {input_dir.resolve()}")
+        raise SystemExit(f"No Markdown files found in {articles_dir.resolve()}")
     state_path.parent.mkdir(parents=True, exist_ok=True)
     # Avoid simultaneous runs using this state file uploading the same articles.
     with state_path.with_name(state_path.name + ".lock").open("a") as lock:
@@ -135,7 +133,7 @@ def main():
         except BlockingIOError:
             raise SystemExit("Another uploader is using this state file") from None
         with OpenAI(timeout=60, max_retries=5) as client:
-            store_id = resolve_store(client, state_path, VECTOR_STORE_ID)
+            store_id = resolve_store(client, state_path, OPENAI_VECTOR_STORE_ID)
             counts = synchronize(client, store_id, articles)
     LOG.info("Summary: articles=%d uploaded=%d skipped=%d failed=%d vector_store_id=%s",
              len(articles), counts["uploaded"], counts["skipped"], counts["failed"], store_id)
