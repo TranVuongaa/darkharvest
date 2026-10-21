@@ -3,3 +3,4 @@ beautifulsoup4==4.13.4
 markdownify==1.1.0
 openai==3.35.1
 python-dotenv==1.2.4
+tiktoken==0.14.0

@@ -12,6 +12,7 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 from openai import OpenAI
+import tiktoken
 
 # Settings are strings loaded from .env (existing environment values take precedence).
 load_dotenv()
@@ -22,6 +23,23 @@ OPENAI_VECTOR_STORE_ID = os.getenv("OPENAI_VECTOR_STORE_ID") or None
 
 LOG = logging.getLogger("optibot.ingestion")
 MANAGER = "optibot-articles-v1"
+CHUNK_SIZE = 800
+CHUNK_OVERLAP = 400
+CHUNKING_STRATEGY = {
+    "type": "static",
+    "static": {"max_chunk_size_tokens": CHUNK_SIZE,
+               "chunk_overlap_tokens": CHUNK_OVERLAP},
+}
+
+
+def estimate_chunks(text: str) -> int:
+    """Estimate sliding windows; OpenAI's parsed/tokenized text can differ."""
+    tokens = len(tiktoken.get_encoding("cl100k_base").encode_ordinary(text))
+    if not tokens:
+        return 0
+    remaining = max(0, tokens - CHUNK_SIZE)
+    stride = CHUNK_SIZE - CHUNK_OVERLAP
+    return 1 + (remaining + stride - 1) // stride
 
 
 def article_key(path: Path) -> str:
@@ -31,7 +49,8 @@ def article_key(path: Path) -> str:
 
 
 def synchronize(client, store_id: str, articles: list[Path]) -> dict[str, int]:
-    counts = dict(uploaded=0, skipped=0, failed=0)
+    counts = dict(uploaded=0, skipped=0, failed=0,
+                  embedded_files=0, embedded_chunks_estimated=0)
     existing = defaultdict(list)
     # SDK iteration follows every page. Only touch files owned by this uploader.
     for file in client.vector_stores.files.list(vector_store_id=store_id):
@@ -58,6 +77,7 @@ def synchronize(client, store_id: str, articles: list[Path]) -> dict[str, int]:
             )
             action = "skipped"
             if current is None:
+                chunks = estimate_chunks(content.decode("utf-8"))
                 # Keep the original bytes: front matter, relative URLs and code.
                 uploaded = client.files.create(
                     file=(path.name, content, "text/markdown"), purpose="assistants",
@@ -69,6 +89,7 @@ def synchronize(client, store_id: str, articles: list[Path]) -> dict[str, int]:
                         attributes={"manager": MANAGER, "article_key": key,
                                     "sha256": digest},
                         max_wait_seconds=300,
+                        chunking_strategy=CHUNKING_STRATEGY,
                     )
                     if current.status != "completed":
                         raise RuntimeError(
@@ -81,6 +102,11 @@ def synchronize(client, store_id: str, articles: list[Path]) -> dict[str, int]:
                         LOG.exception("Could not clean failed upload %s", uploaded.id)
                     raise
                 action = "uploaded"
+                # Indexing succeeded even if obsolete-file cleanup later fails.
+                counts["embedded_files"] += 1
+                counts["embedded_chunks_estimated"] += chunks
+                LOG.info("id=%s file=%s embedded_files=1 embedded_chunks_estimated=%d",
+                         key, path.name, chunks)
 
             # Retry also cleans an interrupted replacement: matching hashes skip
             # upload, but obsolete managed attachments are still removed.
@@ -135,8 +161,10 @@ def main():
         with OpenAI(timeout=60, max_retries=5) as client:
             store_id = resolve_store(client, state_path, OPENAI_VECTOR_STORE_ID)
             counts = synchronize(client, store_id, articles)
-    LOG.info("Summary: articles=%d uploaded=%d skipped=%d failed=%d vector_store_id=%s",
-             len(articles), counts["uploaded"], counts["skipped"], counts["failed"], store_id)
+    LOG.info("Summary: articles=%d uploaded=%d skipped=%d failed=%d "
+             "embedded_files=%d embedded_chunks_estimated=%d vector_store_id=%s",
+             len(articles), counts["uploaded"], counts["skipped"], counts["failed"],
+             counts["embedded_files"], counts["embedded_chunks_estimated"], store_id)
     print(f"Vector Store ID: {store_id}")
     if counts["failed"]:
         raise SystemExit(1)

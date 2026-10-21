@@ -190,7 +190,7 @@ class CliTests(unittest.TestCase):
                      self.assertLogs(level="INFO") as logs:
                     self.assertEqual(scrape.main(), 0)
                 self.assertIn(f"written={written} " + expected, logs.output[-1])
-                self.assertIn("status=" + expected.split("=1")[0].split()[-1], logs.output[0])
+                self.assertIn("status=" + expected.split("=1")[0].split()[-1], logs.output[-2])
 
     def test_unchanged_file_is_not_rewritten(self):
         article = dict(id=1, title="Example", body="<p>Body</p>",

@@ -13,6 +13,7 @@ from src.slug import article_slug
 # Edit these settings, then run: python scrape.py
 LIMIT = 6  # All articles; use a positive integer such as 30 for a limit.
 OUT_DIR = "out"  # Output folder, relative to your current working directory.
+LOG_PATH = "logs/scraper.log"  # Append logs from every run.
 
 LOG = logging.getLogger(__name__)
 
@@ -46,6 +47,24 @@ def main():
     parser.add_argument("--out", type=Path, default=Path(OUT_DIR))
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(message)s")
+    log_path = Path(LOG_PATH)
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    handler = logging.FileHandler(log_path, mode="a", encoding="utf-8")
+    handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
+    root_logger = logging.getLogger()
+    root_logger.addHandler(handler)
+    try:
+        LOG.info("Run started: limit=%s out=%s", args.limit, args.out)
+        return export_articles(args)
+    except Exception:
+        LOG.exception("Scraper failed")
+        return 1
+    finally:
+        root_logger.removeHandler(handler)
+        handler.close()
+
+
+def export_articles(args):
     args.out.mkdir(parents=True, exist_ok=True)
     fetched = skipped = failed = written = 0
     statuses = {"new": 0, "updated": 0, "unchanged": 0}

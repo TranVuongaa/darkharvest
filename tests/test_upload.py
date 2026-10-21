@@ -2,9 +2,9 @@ import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
-from upload_knowledge import MANAGER, resolve_store, synchronize
+from upload_knowledge import CHUNKING_STRATEGY, MANAGER, estimate_chunks, resolve_store, synchronize
 
 
 class UploadTests(unittest.TestCase):
@@ -39,10 +39,32 @@ class UploadTests(unittest.TestCase):
         return synchronize(self.client, 'vs-test', paths or [self.path])
 
     def test_one_file_exact_bytes_and_rerun_skips(self):
-        self.assertEqual(self.sync(), dict(uploaded=1, skipped=0, failed=0))
+        self.assertEqual(self.sync(), dict(uploaded=1, skipped=0, failed=0,
+                                           embedded_files=1, embedded_chunks_estimated=1))
         self.assertEqual(self.client.files.create.call_args.kwargs['file'][1], self.content)
-        self.assertEqual(self.sync(), dict(uploaded=0, skipped=1, failed=0))
+        self.assertEqual(self.sync(), dict(uploaded=0, skipped=1, failed=0,
+                                           embedded_files=0, embedded_chunks_estimated=0))
         self.client.files.create.assert_called_once()
+
+    def test_chunk_estimate_boundaries(self):
+        with patch('upload_knowledge.tiktoken.get_encoding') as encoding:
+            for tokens, expected in [(0, 0), (1, 1), (800, 1), (801, 2),
+                                     (1200, 2), (1201, 3), (2000, 4)]:
+                with self.subTest(tokens=tokens):
+                    encoding.return_value.encode_ordinary.return_value = [0] * tokens
+                    self.assertEqual(estimate_chunks('text'), expected)
+
+    def test_explicit_chunking_and_embedding_log(self):
+        with patch('upload_knowledge.estimate_chunks', return_value=3):
+            with self.assertLogs('optibot.ingestion', level='INFO') as logs:
+                counts = self.sync()
+        self.assertEqual(counts['embedded_files'], 1)
+        self.assertEqual(counts['embedded_chunks_estimated'], 3)
+        self.assertIn('embedded_files=1 embedded_chunks_estimated=3', '\n'.join(logs.output))
+        self.assertEqual(
+            self.client.vector_stores.files.create_and_poll.call_args.kwargs['chunking_strategy'],
+            CHUNKING_STRATEGY,
+        )
 
     def test_rename_keeps_stable_id(self):
         self.sync()
@@ -73,7 +95,8 @@ class UploadTests(unittest.TestCase):
         ]
         with self.assertLogs('optibot.ingestion', level='ERROR'):
             result = self.sync([self.path, other])
-        self.assertEqual(result, dict(uploaded=1, skipped=0, failed=1))
+        self.assertEqual(result, dict(uploaded=1, skipped=0, failed=1,
+                                      embedded_files=1, embedded_chunks_estimated=1))
         self.assertIn(old, self.remote)
         self.client.files.delete.assert_called_once()
         self.client.vector_stores.files.delete.assert_not_called()
@@ -84,7 +107,10 @@ class UploadTests(unittest.TestCase):
         detach = self.client.vector_stores.files.delete.side_effect
         self.client.vector_stores.files.delete.side_effect = RuntimeError('network')
         with self.assertLogs('optibot.ingestion', level='ERROR'):
-            self.assertEqual(self.sync()['failed'], 1)
+            result = self.sync()
+            self.assertEqual(result['failed'], 1)
+            self.assertEqual(result['embedded_files'], 1)
+            self.assertEqual(result['embedded_chunks_estimated'], 1)
         self.assertEqual(len(self.remote), 2)
         self.client.vector_stores.files.delete.side_effect = detach
         self.assertEqual(self.sync()['skipped'], 1)

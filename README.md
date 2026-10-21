@@ -1,190 +1,354 @@
-# X Markdown export
+# Darkharvest: OOO support knowledge exporter
 
-Export the public English X Help Center to one Markdown file per article.
-Requires Python 3.11+; no API key or authentication is needed.
+Darkharvest converts article data from the configured Help Center API into
+Markdown. It can also upload those files to an OpenAI vector store for retrieval.
+Each article becomes one UTF-8 Markdown file with source metadata, a title,
+and the converted article body.
 
-## Setup and run
+The scraper uses the public Zendesk Help Center API without credentials.
+The optional uploader requires an OpenAI API key.
+
+## Requirements and setup
+
+Use Python 3.11 or newer. The uploader requires macOS or Linux because it uses
+`fcntl` for file locking.
+
+Run these commands from the repository root:
 
 ```sh
 python3.11 -m venv .venv
 source .venv/bin/activate
 python -m pip install -r requirements.txt
-python scrape.py --out out/
-python scrape.py --limit 30 --out out/
-python -m unittest discover -s tests -v
 ```
 
-Use any installed Python 3.11+ for the first command (this workspace was verified
-with `python3.14`). The default is all articles; `--limit` caps the number of API
-articles processed.
-Output is UTF-8 and `out/` is gitignored.
+Replace `python3.11` with another installed Python 3.11+ interpreter if needed.
+Dependencies are pinned in `requirements.txt`.
 
-To configure the run directly in `scrape.py`, edit the settings near the top:
+## Export articles to Markdown
+
+To process up to 30 article records:
+
+```sh
+python scrape.py --limit 30 --out articles/
+```
+
+The examples in this README write exported files to `articles/`, the directory
+used by the upload workflow.
+
+To export all articles available from the configured API endpoint, set the
+following values near the top of `scrape.py`:
 
 ```python
-LIMIT = None  # All articles; change to 30 to export up to 30.
-OUT_DIR = "out"  # Relative to your current working directory.
+LIMIT = None
+OUT_DIR = "articles"
 ```
 
-Then run `python scrape.py` without arguments. Optional `--limit` and `--out`
-arguments override these settings for a single run.
-
-## Design
-
-- Uses the Zendesk articles API, not page scraping. Inspection on 2026-10-20
-  returned HTTP 200 without credentials and 415 articles. The locale-free URL
-  redirects to `en-us`. The exporter requests `page[size]=100` to enable cursor
-  pagination, follows the returned `links.next` URL unchanged, and stops when
-  `meta.has_more` is false (including an empty final page). It rejects repeated
-  page URLs and missing next links when more results are advertised.
-  See [Zendesk's cursor pagination guide](https://developer.zendesk.com/documentation/api-basics/pagination/paginating-through-lists-using-cursor-pagination/)
-  and [Articles API reference](https://developer.zendesk.com/api-reference/help_center/help-center-api/articles/#list-articles).
-- Requests have a User-Agent, connection/read timeouts, and up to five retries
-  with exponential backoff for transient failures. HTTP 429 respects Retry-After.
-- BeautifulSoup removes unwanted elements and 1×1 images; markdownify produces
-  ATX headings, lists, tables, links, and images. Code blocks are protected and
-  fenced with enough backticks to contain literal backticks safely.
-- Filenames use normalized Unicode titles plus article IDs. New and changed
-  files are written atomically; unchanged files are not rewritten. Renamed
-  articles remove their prior ID-suffixed file.
-- Front matter records title, source URL, ID, and update timestamp. Each file has
-  a top-level title, and relative URLs remain relative.
-- Each article logs its ID, slug, and UTF-8 byte count. Drafts and duplicate IDs
-  are skipped. An article failure does not stop later articles. Fetch failures
-  stop pagination, retain completed files, and produce a nonzero exit status.
-  Summary `fetched` counts encountered records and never exceeds `--limit`;
-  `failed` also includes fetch
-  failures; `written` counts files actually created or updated.
-- Each successful export also reports `status=new`, `updated`, or `unchanged`.
-  The exporter matches existing files by article ID (including renamed titles)
-  and compares SHA-256 hashes of the complete UTF-8 Markdown, including front
-  matter. Missing files are `new`; different hashes are `updated`; matching
-  hashes are `unchanged`. A timestamp-only metadata change counts as an update,
-  and content changes are detected even when `updated_at` stays the same.
-  The summary includes all three status counts. `new + updated` equals
-  `written`; unchanged files retain their existing contents and timestamps.
-  Counts cover only articles processed in this run and use the selected output
-  directory as the baseline; an empty directory makes every export `new`.
-
-  Example repeat run:
-  `Summary: fetched=5 skipped=0 failed=0 written=0 new=0 updated=0 unchanged=5`
-
-## Limitations
-
-- Exports the public `en-us` collection only, not translations or private content.
-- Images remain remote; relative links are not rewritten to local files.
-  Original fragment links are retained, but custom HTML anchor IDs may not match
-  a Markdown viewer's generated heading anchors.
-- Embedded iframes are removed. Complex HTML layout is simplified to Markdown.
-  Pixel detection covers explicit 1×1 HTML dimensions and inline CSS dimensions,
-  not every possible tracking service.
-- Prose trailing spaces and excess blank lines are removed. Code whitespace is
-  deliberately preserved, including blank lines and trailing spaces.
-- Previously exported articles removed from the server are not deleted.
-  The live API is not a transactional snapshot if articles change during a run.
-
-## Verification
-
-The full run exported **415 articles**, with **0 skipped and 0 failed**.
-Spot checks covered the Eventbrite article (headings/lists), the RTSP article
-(fenced code), and Web Scripting (relative image paths). The conversion fixture
-also verifies a relative article link and removal of navigation/footer text.
+Then run:
 
 ```sh
-ls out | wc -l
-grep -L '^# ' out/*.md
-grep -l '<div\|<span\|<script' out/*.md
+python scrape.py
 ```
 
-The count was 415; both grep commands returned no files.
-All 13 unit tests passed. A second full export produced the same 415 filenames
-and identical SHA-256 content hashes, confirming clean overwrites without duplicates.
-After switching to cursor pagination, a full export to a temporary directory on
-2026-10-21 again wrote 415 articles, with 0 skipped and 0 failed. All files had
-title headings. Pagination tests cover multiple pages, an empty terminal page,
-stopping on `has_more=false` even with a next link, and malformed pagination.
+`--limit` accepts a positive integer and overrides `LIMIT` for that run.
+There is no CLI flag for an unlimited export; set `LIMIT = None` in the script.
+`--out` overrides `OUT_DIR`. Relative paths resolve from your working directory.
+The standalone scraper does not read `.env` or `ARTICLES_DIR`.
 
-## Upload articles to OpenAI
+The limit counts encountered API records, including drafts, duplicates, and
+records that fail conversion. Therefore, `--limit 30` does not guarantee 30
+output files. Export the full collection and check the output count when at
+least 30 files are required.
 
-Run both steps in sequence with:
+### Output format
+
+Filenames use a normalized title followed by the Zendesk article ID:
+`articles/<title-slug>-<id>.md`. Unicode letters are retained; an empty title slug
+falls back to `article-<id>.md`.
+
+For example, an article could produce `articles/example-article-123.md` with:
+
+````markdown
+---
+title: "Example article"
+source: "https://support.OOO.com/hc/en-us/articles/123"
+id: 123
+updated_at: "2026-10-21T00:00:00Z"
+---
+
+# Example article
+
+## Instructions
+
+[Related article](/hc/en-us/articles/456)
+
+```python
+print("Example")
+```
+````
+
+This is an illustrative example, not a captured support article.
+
+### Fetching, conversion, and repeat runs
+
+The client requests the endpoint configured by `ARTICLES_URL` in
+`src/client.py`, with `page[size]=100`. The endpoint determines the source
+collection and locale. It follows cursor pagination through `links.next` until
+`meta.has_more` is false. Repeated page URLs and missing next links are treated as errors.
+Requests include a User-Agent, 10-second connection and 60-second read timeouts,
+and up to five retries with backoff. The retry policy covers HTTP 429 and
+selected server errors and respects `Retry-After`.
+
+Only the API's article `body` HTML is converted, avoiding the surrounding page
+navigation. BeautifulSoup removes scripts, styles, navigation, headers,
+footers, iframes, noscript elements, empty elements, and explicitly sized 1×1
+images. Markdownify converts the remaining content into headings, lists,
+tables, links, and images.
+
+Relative link and image targets remain relative. Images are referenced without
+being downloaded. Preformatted code becomes fenced blocks, preserving code
+whitespace and using longer fences when the code contains backticks. Prose
+trailing whitespace is stripped, repeated blank lines are collapsed, and each
+file ends with one newline.
+
+On repeat runs, the exporter compares the complete Markdown bytes using
+SHA-256, including front matter. New or changed files are replaced atomically;
+unchanged files retain their timestamps. A renamed article gets a new filename,
+and its previous ID-suffixed file is removed. A metadata-only change also counts
+as an update. Articles removed from the server are not deleted locally.
+
+Drafts and duplicate IDs are skipped. An individual conversion or write failure
+is logged, and processing continues. A fetch failure stops pagination while
+retaining completed files. Any recorded failure produces a nonzero exit status.
+
+### Export logs
+
+Every scraper run writes to both the terminal and `logs/scraper.log` (UTF-8).
+The log directory is created automatically. File logs include timestamps and
+levels, and append to previous runs instead of overwriting them. Each run starts
+with `Run started: limit=... out=...` and ends with a summary; errors include
+tracebacks. Logs are flushed as records are written, so progress is available
+while the scraper runs. This also applies when invoked through `main.py`.
+Change `LOG_PATH` in `scrape.py` to choose another location; relative paths resolve
+from your working directory. The default `logs/` directory is gitignored.
+
+Each successful article logs its ID, slug, UTF-8 byte count, and status:
+`new`, `updated`, or `unchanged`. The final summary includes:
+
+| Field | Meaning |
+| --- | --- |
+| `fetched` | API records encountered in this run, capped by the limit. |
+| `skipped` | Draft or duplicate records skipped. |
+| `failed` | Article failures plus any fetch failure. |
+| `written` | Files created or updated; equals `new + updated`. |
+| `new`, `updated`, `unchanged` | Successful exports grouped by their local file status. |
+
+For example, an unchanged 30-article rerun could report:
+
+```text
+Summary: fetched=30 skipped=0 failed=0 written=0 new=0 updated=0 unchanged=30
+```
+
+## Upload to an OpenAI vector store
+
+### Configuration
+
+If you do not already have a `.env` file, copy the example:
 
 ```sh
-python main.py
+cp .env.example .env
+```
+
+If `.env` already exists, merge the example settings into it. Set
+`OPENAI_API_KEY` to your key. The remaining settings are:
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `ARTICLES_DIR` | `articles` | Directory containing the Markdown files to upload. |
+| `INGESTION_LOG_PATH` | `logs/ingestion.log` | File receiving uploader logs. |
+| `INGESTION_STATE_PATH` | `.ingestion-state.json` | Local file storing the selected vector store ID. |
+| `OPENAI_VECTOR_STORE_ID` | Unset or blank | Existing store to use; otherwise reuse saved state or create a store. |
+
+Existing environment variables take precedence over `.env`. Relative paths
+resolve from your working directory. `.env`, `out/`, `articles/`, `logs/`, and
+the default ingestion state files are gitignored.
+
+### Run both steps
+
+```sh
 python main.py --limit 30
 ```
 
-`main.py` loads `.env` beside the script and uses `ARTICLES_DIR` (default:
-`articles`) for both export and upload. Relative paths remain relative to your
-current working directory. Without `--limit`, it uses the current `LIMIT` in
-`scrape.py`. Upload starts only if scraping succeeds; failures from either step
-produce a nonzero exit status. Upload processes all Markdown files in
-`ARTICLES_DIR`, including files from previous exports.
+`main.py` loads `.env` beside the script, exports into `ARTICLES_DIR`, then runs
+the uploader only if the export succeeds. It returns a nonzero exit status if
+either step fails. Without `--limit`, it uses the configured `LIMIT` from
+`scrape.py`.
 
-Install `requirements.txt` again to include the pinned OpenAI SDK and dotenv
-packages. The uploader requires an OpenAI API key, unlike the public scraper.
-Set `OPENAI_API_KEY` in your environment or a local `.env` file, then run:
+**The limit applies only to scraping.** Uploading processes every top-level
+`*.md` file in `ARTICLES_DIR`, including files from previous exports. It does
+not search subdirectories.
+
+To run the steps separately with the default upload directory:
 
 ```sh
-python -m pip install -r requirements.txt
-python scrape.py --out articles/
+python scrape.py --limit 30 --out articles/
 python upload_knowledge.py
 ```
 
-Copy `.env.example` to `.env` if you do not already have one; otherwise merge
-its settings into your existing `.env`. Set your API key and configure:
+If you change `ARTICLES_DIR`, pass the same directory to the scraper's `--out`.
+The uploader is configured through environment variables and `.env`, not CLI
+options.
 
-```dotenv
-ARTICLES_DIR="articles"
-INGESTION_LOG_PATH="logs/ingestion.log"
-INGESTION_STATE_PATH=".ingestion-state.json"
-OPENAI_VECTOR_STORE_ID=""
+### Store reuse and synchronization
+
+The first upload creates a store named `OptiBot Support Knowledge Base` unless
+an existing store is configured. Its ID is saved before article uploads begin,
+printed to the console, and recorded in the ingestion log. Keep the state file
+so later runs reuse the same store.
+
+A configured store ID that conflicts with saved state is rejected. Use a
+separate `INGESTION_STATE_PATH` when intentionally selecting another store.
+If state is lost and no store ID is supplied, the next run creates a new store.
+
+Each article is uploaded as one file with its original bytes, including front
+matter and code whitespace. The uploader identifies articles by the numeric
+ID suffix in the filename, falling back to the whole filename if no suffix is
+present. Duplicate local identities are rejected before uploads start.
+
+Managed remote files carry an ownership marker, article identity, and content
+hash. The uploader checks all pages of store attachments and skips completed
+files with matching hashes. Changed files are indexed successfully before old
+managed versions are detached. Reruns also retry unfinished replacement cleanup.
+Unmanaged files, including older uploads without ownership metadata, are left
+untouched.
+
+Article failures are logged individually while remaining articles continue.
+The uploader requests five SDK retries, a 60-second request timeout, and a
+300-second indexing polling limit per article. A local lock prevents overlapping
+runs using the same state path; it does not coordinate different machines or
+separate state paths targeting the same store.
+
+### Chunking and ingestion logs
+
+New attachments request static chunking with **800 tokens per chunk and 400
+tokens of overlap**. Each article remains a single uploaded file; the script
+does not create separate Markdown chunks. Unchanged completed attachments are
+reused with their existing chunking policy.
+
+The uploader writes logs to the console and `INGESTION_LOG_PATH`. Its summary
+reports:
+
+| Field | Meaning |
+| --- | --- |
+| `articles` | Local Markdown files selected for this run. |
+| `uploaded` | Files newly indexed with replacement cleanup completed. |
+| `skipped` | Matching completed files reused, with cleanup completed. |
+| `failed` | Articles whose upload, indexing, or cleanup failed. |
+| `embedded_files` | Files successfully indexed during this run. |
+| `embedded_chunks_estimated` | Local chunk estimate for those newly indexed files. |
+| `vector_store_id` | Store used for the run. |
+
+Chunk estimates use tiktoken's `cl100k_base` encoding of the original Markdown.
+For a nonempty file with `T` tokens, the estimate is
+`1 + ceil(max(0, T - 800) / 400)`. This is a local estimate, not an API-reported
+embedding count; server-side processing can differ. The tokenizer may download
+encoding data on first use.
+
+These counters describe this run, not the whole store. An unchanged rerun has
+zero newly embedded files and estimated chunks. If indexing succeeds but old
+attachment cleanup fails, the new file still contributes to the embedding
+counters, and the article also counts as failed.
+
+## Project layout
+
+```text
+.
+├── AGENTS.md                 # Repository working instructions
+├── README.md                 # Setup, usage, and design documentation
+├── requirements.txt          # Pinned Python dependencies
+├── .env.example              # Uploader configuration template
+├── .gitignore                # Local and generated file exclusions
+├── main.py                   # Run export, then upload
+├── scrape.py                 # Export CLI and local change detection
+├── upload_knowledge.py       # Vector store synchronization
+├── src/
+│   ├── __init__.py
+│   ├── client.py             # API requests, retries, and cursor pagination
+│   ├── convert.py            # HTML cleaning and Markdown conversion
+│   └── slug.py               # Unicode filenames with article IDs
+└── tests/
+    ├── test_export.py        # Conversion, slugs, API client, and export tests
+    ├── test_main.py          # Pipeline sequencing and failure handling
+    ├── test_upload.py        # Upload synchronization and chunk estimates
+    └── fixtures/
+        ├── article.html      # Conversion input
+        └── article.md        # Expected Markdown output
 ```
 
-Settings are loaded as strings. Existing environment values take precedence
-over `.env` values.
+Local configuration and runtime output are separate from the source files:
 
-Paths are relative to your current working directory. `ARTICLES_DIR` contains
-the Markdown articles to upload; `INGESTION_LOG_PATH` is the uploader log file,
-and `INGESTION_STATE_PATH` stores the vector store ID between runs.
-The generated `articles/` directory is gitignored.
+```text
+.
+├── .env                      # Local configuration and API key
+├── articles/                 # Markdown output used by the documented workflow
+├── logs/
+│   ├── ingestion.log         # Upload progress and errors
+│   └── scraper.log           # Scraper progress and errors, appended across runs
+├── .ingestion-state.json     # Saved vector store ID
+└── .ingestion-state.json.lock # Lock for the default ingestion state path
+```
 
-The first run creates a vector store and saves its ID in
-`.ingestion-state.json` before uploading. Keep this file: subsequent runs reuse
-that store. The ID is also printed and recorded in `logs/ingestion.log`.
-To select an existing store on the first run, set `OPENAI_VECTOR_STORE_ID` in `.env`
-or your environment.
-When this setting is blank or unset, saved state is used.
-A store conflicting with saved state is rejected; use a separate `INGESTION_STATE_PATH`
-when intentionally targeting another store.
+Runtime paths can be changed through the settings described above. The existing
+`out/` directory is an alternate export location; the commands in this README
+use `articles/` consistently.
 
-Each Markdown article is uploaded as **one file**, byte for byte, preserving
-front matter (including `source`), relative links and code whitespace. OpenAI
-handles retrieval chunking internally. There are no separate `_1.md`, `_2.md`
-chunk uploads. Remote attributes record the stable article ID from the filename,
-the SHA-256 content hash, and the uploader's ownership marker. SDK pagination
-checks all existing attachments. Unchanged completed files are skipped; changed
-articles are indexed successfully before old managed versions are detached.
-Filenames without an ID suffix use the whole filename as their identity.
-Duplicate local IDs are rejected instead of uploading conflicting copies.
+## Verification
 
-Failures are logged per article and produce a nonzero exit status while other
-articles continue. Reruns retry failed articles and unfinished replacement
-cleanup. The SDK retries transient requests, and indexing polling has a
-five-minute limit per article. A local file lock prevents overlapping runs
-using the same state path (macOS/Linux). Do not run multiple machines or
-separate state files against the same store concurrently.
+Run the existing tests:
 
-Older uploads from the previous chunk-based script have no ownership metadata
-and are left untouched, even when selecting their existing store. For a clean
-migration, use a new store and configure your application with its printed ID.
-Old stores and chunk uploads are not automatically deleted. Replacement only
-detaches old files from this store; it does not delete the underlying account
-files, which could be used elsewhere. Articles removed locally are not pruned.
-A process kill or ambiguous network response during file creation may leave an
-unattached account file; local locking and hash checks do not make remote
-operations transactional. Losing the state file without supplying the store ID
-will create another store.
+```sh
+python -m unittest discover -s tests -v
+```
 
-Uploader verification is offline with a mocked SDK: byte preservation, repeated
-runs, renamed and changed articles, failure isolation, interrupted replacement,
-legacy-file preservation, duplicate input IDs, and saved store reuse.
+The suite covers conversion fixtures, code whitespace, relative links, element
+removal, slugs, pagination, local change detection, pipeline ordering, and
+upload synchronization. API and SDK operations are mocked; passing tests do not
+verify live credentials, remote indexing, or current article availability.
+
+After an export, check the generated files:
+
+```sh
+find articles -maxdepth 1 -type f -name '*.md' | wc -l
+grep -L '^# ' articles/*.md
+grep -l '<div\|<span\|<script' articles/*.md
+```
+
+For the export task, the count should be at least 30. The first grep lists
+files missing a title heading; the second flags possible leftover HTML for inspection. Literal
+HTML inside a preserved code example may also match. No matches produce grep
+exit status 1.
+
+Spot-check at least three files for readable headings, fenced code, unchanged
+relative targets, and absence of navigation/footer text. Existing files count
+toward the directory total, so use a fresh output directory when measuring a
+single run. Article counts depend on the live collection and selected limit.
+
+## Known limitations
+
+- Export coverage follows the configured API endpoint; the client does not
+  discover additional collections or locales automatically. There is no
+  page-scraping fallback if the API is unavailable, and a changing collection
+  is not a transactional snapshot.
+- Complex HTML layouts are simplified and embedded iframes are removed. Custom
+  HTML anchors may not match a Markdown viewer's generated heading anchors.
+- Images remain remote or relative, and article links are not rewritten to
+  local Markdown files. Pixel removal detects explicit 1×1 dimensions, not
+  every tracking mechanism.
+- Code whitespace is preserved, including trailing spaces and repeated blank
+  lines. Prose whitespace normalization does not apply inside fenced blocks.
+- Removed source articles remain on disk, and locally removed articles are not
+  pruned from the vector store.
+- Replacement detaches obsolete managed files from the selected store; it does
+  not delete their underlying account files. Old stores and unmanaged uploads
+  require separate cleanup.
+- Interrupted file creation or ambiguous network responses can leave unattached
+  account files. Local locks and hashes do not make remote operations atomic.
