@@ -23,8 +23,8 @@ def main(argv=None):
     root = Path(__file__).resolve().parent
     load_dotenv(root / ".env")
     env = os.environ.copy()
-    if not env.get("OPENAI_VECTOR_STORE_ID", "").strip():
-        parser.error("Set OPENAI_VECTOR_STORE_ID in .env or the environment")
+    if not env.get("OPENAI_API_KEY", "").strip():
+        parser.error("Set OPENAI_API_KEY in .env or the environment")
     env.setdefault("ARTICLES_DIR", "articles")
     command = [sys.executable, str(root / "scrape.py"), "--out", env["ARTICLES_DIR"]]
     if args.limit is not None:

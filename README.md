@@ -1,68 +1,58 @@
 # Darkharvest
 
-Export OptiSigns support articles as clean Markdown and synchronize them with an
-existing OpenAI vector store for a support assistant.
+Export OptiSigns support articles to clean Markdown and sync them to an OpenAI vector store for a support assistant.
 
-**Setup** — Python 3.11+ on macOS or Linux. From the repository root:
+**Setup** — Python 3.11+ on macOS/Linux. Run from the repository root:
 
 ```sh
 python3.11 -m venv .venv
 source .venv/bin/activate
-python -m pip install -r requirements.txt
-cp .env.example .env  # Only if you do not already have a .env file.
+pip install -r requirements.txt
+cp -n .env.example .env
 ```
 
-For uploads, set `OPENAI_API_KEY` and `OPENAI_VECTOR_STORE_ID` in `.env`.
-Set `ARTICLES_DIR` in `.env` to the directory used for exports and uploads
-(default: `articles`):
+Set `OPENAI_API_KEY` in `.env` (the API key variable used by this project).
+Set `ARTICLES_DIR=articles` and leave `LIMIT=` blank to export all articles.
+Optionally set `OPENAI_VECTOR_STORE_ID`; if blank, the job creates a store and
+prints its ID. Save that ID in `.env` to reuse it on subsequent runs.
 
-```dotenv
-ARTICLES_DIR="articles"
-LIMIT=
-```
-
-Leave `LIMIT` blank to process all articles. Run commands from the repository
-root; relative paths resolve against the current working directory. Add any
-custom generated directory inside the repository to `.gitignore`.
-
-**Run locally**
+**Run locally** — Export articles, then upload:
 
 ```sh
-LIMIT= python main.py                       # Export all articles, then upload.
-python -m unittest discover -s tests -v     # Run tests.
+python main.py                 # All articles when LIMIT is blank.
+python main.py --limit 30      # Limit the fetched API records to 30.
+python -m unittest discover -s tests -v
 ```
 
-`--limit` counts API records, so skipped or failed records can reduce the output
-count. Uploads process all Markdown files in `ARTICLES_DIR`.
+Relative output paths resolve against the current working directory; gitignore
+custom export directories. Uploads include every Markdown file in `ARTICLES_DIR`.
 
-## Delta synchronization
+**Docker** — Build and run the job once:
 
-Each run exports articles again, then calculates SHA-256 over the exact bytes of
-each Markdown file (including front matter and whitespace). The uploader lists
-all vector-store file attachments, following SDK pagination, and compares this
-local digest with remote `attributes.sha256`; it does not download remote content
-or use a local hash cache. SHA-256 is the comparison value; `attributes` is where
-that value and the article identity are stored:
-
-```json
-{
-  "manager": "optibot-articles-v1",
-  "article_key": "123456789",
-  "sha256": "<SHA-256 hex digest of the Markdown bytes>"
-}
+```sh
+docker build -t optisigns-job .
+docker run --rm -e OPENAI_API_KEY=... optisigns-job python main.py
 ```
 
-`article_key` is the Zendesk ID at the end of the filename, falling back to the
-filename when no ID is present. Only attachments with this `manager` are managed.
+The job exits with code `0` on success and a nonzero code on failure. To reuse a
+store, also pass `-e OPENAI_VECTOR_STORE_ID=vs_...`. Exports inside the container
+are removed when it exits.
 
-| Remote state for the article key | Result |
-| --- | --- |
-| No managed attachment | Upload and index; count as `added`. |
-| A `completed` attachment has the same SHA-256 | Skip upload/indexing; count as `skipped`. |
-| Managed attachments exist, but none is completed with the same SHA-256 | Upload and index a replacement; count as `updated`. |
+**Daily job logs** — CloudWatch logs are private and require authorized AWS
+access. Review the supplied [CloudWatch run screenshot](images/couldwatch_log_auto.png)
+and [EventBridge schedule screenshot](images/schedule.png) as evidence.
+The schedule shows a daily run at **09:40 Asia/Ho_Chi_Minh**; the captured run
+reports **35 articles, 35 skipped, 0 failed**, with status `success`.
 
+<a href="images/couldwatch_log_auto.png"><img src="images/couldwatch_log_auto.png" alt="CloudWatch daily job logs showing 35 articles, 35 skipped, and 0 failed" width="48%"></a>
+<a href="images/schedule.png"><img src="images/schedule.png" alt="EventBridge schedule enabled for daily runs at 09:40 Asia/Ho_Chi_Minh" width="48%"></a>
 
+**Design and limitations** — Zendesk's article API excludes page navigation;
+conversion preserves headings, fenced code, and relative links. SHA-256 comparison
+against vector-store attributes skips unchanged articles. Skipped/failed API
+records can reduce the export count below `--limit`; images remain remote links.
 
-**Sample assistant answer** — “How do I add a YouTube video?”
+**Sample assistant answer** — “How do I add a YouTube video?” The screenshot
+shows instructions and a linked source guide. Click to view at full resolution.
 
-<a href="images/assistant_answer.png"><img src="images/assistant_answer.png" alt="OptiBot answering how to add a YouTube video in OptiSigns, with a source citation" height="280"></a>
+<a href="images/assistant_answer.png"><img src="images/assistant_answer.png" alt="OptiBot answering how to add a YouTube video in OptiSigns, with a linked source guide and file citation" height="180"></a>

@@ -147,12 +147,20 @@ class UploadTests(unittest.TestCase):
         self.client.vector_stores.retrieve.assert_called_once_with('vs-configured')
         self.client.vector_stores.create.assert_not_called()
 
-    def test_missing_store_does_not_create_or_reuse_one(self):
+    def test_missing_store_creates_one(self):
+        self.client.vector_stores.create.return_value.id = 'vs-created'
         for value in (None, '', '   '):
-            with self.subTest(value=value), self.assertRaisesRegex(ValueError, 'OPENAI_VECTOR_STORE_ID'):
-                resolve_store(self.client, value)
+            with self.subTest(value=value):
+                self.client.vector_stores.create.reset_mock()
+                self.assertEqual(resolve_store(self.client, value), 'vs-created')
+                self.client.vector_stores.create.assert_called_once_with(
+                    name='OptiSigns support articles')
         self.client.vector_stores.retrieve.assert_not_called()
-        self.client.vector_stores.create.assert_not_called()
+
+    def test_store_creation_failure_is_propagated(self):
+        self.client.vector_stores.create.side_effect = RuntimeError('creation failed')
+        with self.assertRaisesRegex(RuntimeError, 'creation failed'):
+            resolve_store(self.client, None)
 
     def test_invalid_store_does_not_create_replacement(self):
         self.client.vector_stores.retrieve.side_effect = RuntimeError('store not found')

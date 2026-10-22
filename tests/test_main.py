@@ -15,6 +15,7 @@ class MainTests(unittest.TestCase):
         self.addCleanup(temporary.cleanup)
         self.artifact = Path(temporary.name) / "run.json"
         patcher = patch.dict(os.environ, {"RUN_ARTIFACT_PATH": str(self.artifact),
+                                          "OPENAI_API_KEY": "test-key",
                                           "OPENAI_VECTOR_STORE_ID": "vs-test"})
         patcher.start()
         self.addCleanup(patcher.stop)
@@ -71,7 +72,15 @@ class MainTests(unittest.TestCase):
     @patch("main.load_dotenv")
     @patch.dict(os.environ, {"OPENAI_VECTOR_STORE_ID": " "})
     @patch("main.subprocess.run")
-    def test_missing_store_stops_before_scraping(self, run, load):
+    def test_missing_store_allows_pipeline(self, run, load):
+        run.return_value.returncode = 0
+        self.assertEqual(main([]), 0)
+        self.assertEqual(run.call_count, 2)
+
+    @patch("main.load_dotenv")
+    @patch.dict(os.environ, {"OPENAI_API_KEY": " "})
+    @patch("main.subprocess.run")
+    def test_missing_api_key_stops_before_scraping(self, run, load):
         with self.assertRaises(SystemExit) as error:
             main([])
         self.assertEqual(error.exception.code, 2)

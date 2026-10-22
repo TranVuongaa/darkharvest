@@ -118,9 +118,12 @@ def synchronize(client, store_id: str, articles: list[Path]) -> dict[str, int]:
 
 def resolve_store(client, requested: str | None) -> str:
     store_id = (requested or "").strip()
-    if not store_id:
-        raise ValueError("Set OPENAI_VECTOR_STORE_ID in .env or the environment")
-    client.vector_stores.retrieve(store_id)
+    if store_id:
+        client.vector_stores.retrieve(store_id)
+    else:
+        store_id = client.vector_stores.create(name="OptiSigns support articles").id
+        LOG.info("Created vector store. Set OPENAI_VECTOR_STORE_ID=%s for future runs.",
+                 store_id)
     LOG.info("Vector Store ID: %s", store_id)
     return store_id
 
@@ -128,8 +131,8 @@ def resolve_store(client, requested: str | None) -> str:
 def main():
     load_dotenv(Path(__file__).resolve().parent / ".env")
     requested = os.getenv("OPENAI_VECTOR_STORE_ID", "").strip()
-    if not requested:
-        raise SystemExit("Set OPENAI_VECTOR_STORE_ID in .env or the environment")
+    if not os.getenv("OPENAI_API_KEY", "").strip():
+        raise SystemExit("Set OPENAI_API_KEY in .env or the environment")
     articles_dir = Path(os.getenv("ARTICLES_DIR", "articles"))
     log_path = Path(os.getenv("INGESTION_LOG_PATH", "logs/ingestion.log"))
     log_path.parent.mkdir(parents=True, exist_ok=True)
