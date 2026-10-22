@@ -1,4 +1,3 @@
-import json
 from pathlib import Path
 import tempfile
 import os
@@ -13,35 +12,17 @@ class MainTests(unittest.TestCase):
     def setUp(self):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
-        self.artifact = Path(temporary.name) / "run.json"
-        patcher = patch.dict(os.environ, {"RUN_ARTIFACT_PATH": str(self.artifact),
-                                          "OPENAI_API_KEY": "test-key",
+        self.root = Path(temporary.name)
+        patcher = patch.dict(os.environ, {"OPENAI_API_KEY": "test-key",
                                           "OPENAI_VECTOR_STORE_ID": "vs-test"})
         patcher.start()
         self.addCleanup(patcher.stop)
 
     @patch("main.load_dotenv")
-    @patch("main.subprocess.run")
-    def test_artifact_contains_upload_counts(self, run, load):
-        def execute(command, env):
-            if command[1].endswith("upload_knowledge.py"):
-                Path(env["UPLOAD_SUMMARY_PATH"]).write_text(json.dumps(
-                    {"added": 2, "updated": 1, "skipped": 27, "failed": 0}))
-            return CompletedProcess(command, 0)
-        run.side_effect = execute
-        self.assertEqual(main([]), 0)
-        result = json.loads(self.artifact.read_text())
-        self.assertEqual((result["added"], result["updated"], result["skipped"]), (2, 1, 27))
-        self.assertEqual(result["status"], "success")
-
-    @patch("main.load_dotenv")
     @patch("main.subprocess.run", side_effect=OSError("cannot start"))
-    def test_exception_writes_failed_artifact(self, run, load):
+    def test_subprocess_exception_propagates(self, run, load):
         with self.assertRaises(OSError):
             main([])
-        result = json.loads(self.artifact.read_text())
-        self.assertEqual(result["status"], "failed")
-        self.assertIsNone(result["added"])
 
     @patch("main.load_dotenv")
     @patch.dict(os.environ, {"ARTICLES_DIR": "custom articles"})
@@ -88,7 +69,7 @@ class MainTests(unittest.TestCase):
 
     @patch("main.subprocess.run")
     def test_store_id_loaded_from_dotenv(self, run):
-        root = self.artifact.parent
+        root = self.root
         (root / ".env").write_text("OPENAI_VECTOR_STORE_ID=vs-from-dotenv\n")
         run.return_value.returncode = 0
         with patch.dict(os.environ):

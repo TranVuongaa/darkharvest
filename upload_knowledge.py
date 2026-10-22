@@ -3,7 +3,6 @@
 
 import fcntl
 import hashlib
-import json
 import logging
 import os
 import re
@@ -158,9 +157,6 @@ def main():
              counts["embedded_files"], counts["embedded_chunks_estimated"], store_id)
     LOG.info("Delta: added=%d updated=%d skipped=%d failed=%d",
              counts["added"], counts["updated"], counts["skipped"], counts["failed"])
-    summary_path = os.getenv("UPLOAD_SUMMARY_PATH")
-    if summary_path:
-        Path(summary_path).write_text(json.dumps({**counts, "vector_store_id": store_id}) + "\n")
     print(f"Vector Store ID: {store_id}")
     if counts["failed"]:
         raise SystemExit(1)
