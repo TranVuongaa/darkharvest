@@ -61,20 +61,7 @@ filename when no ID is present. Only attachments with this `manager` are managed
 | A `completed` attachment has the same SHA-256 | Skip upload/indexing; count as `skipped`. |
 | Managed attachments exist, but none is completed with the same SHA-256 | Upload and index a replacement; count as `updated`. |
 
-Old managed attachments for that key are detached only after the current version
-is indexed successfully. A retry also removes obsolete attachments when the
-matching version already exists. Detaching an old attachment does not delete its
-underlying OpenAI File. Indexing or cleanup failures are logged per article and
-make the upload job exit nonzero; an indexing failure leaves the old attachment
-in place. Duplicate article IDs in the local input abort synchronization before
-uploads, so remove stale renamed Markdown copies before reusing an export folder.
 
-Metadata-only changes in front matter also change the hash. Deleted source
-articles are not pruned.
-
-**Design and limitations** — Uses the public Zendesk API, preserves headings,
-fenced code and relative links, and removes page clutter. Hashes detect unchanged
-content. Images are not downloaded, and removed source articles are not pruned.
 
 **Sample assistant answer** — “How do I add a YouTube video?”
 

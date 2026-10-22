@@ -6,3 +6,4 @@ out/
 logs/
 .ingestion-state.json*
 articles/
+aws_build.txt
