@@ -8,7 +8,7 @@ Scrape ≥ 30 articles from `support.optisigns.com` and convert each to clean Ma
 
 Requirements:
 - Pull **≥ 30** articles (aim for all available; hard minimum 30).
-- One file per article: `out/<slug>.md`.
+- One file per article: `<ARTICLES_DIR>/<slug>.md`. Configure `ARTICLES_DIR` in `.env` (default: `articles`).
 - Preserve: **headings, code blocks, relative links**.
 - Remove: nav, header/footer, ads, scripts, styles, tracking junk.
 - Hint from interviewer: use the Zendesk Help Center API (articles endpoint).
@@ -55,9 +55,15 @@ Requirements:
   │   ├── convert.py     # HTML -> clean Markdown
   │   └── slug.py
   ├── tests/
-  └── out/               # generated, gitignored
+  └── articles/          # Default ARTICLES_DIR; generated, gitignored
   ```
-- CLI: `python scrape.py --limit N --out out/` (default: all).
+- Pipeline CLI: `python main.py --limit N` reads `ARTICLES_DIR` from `.env` and passes it to the scraper. Omit `--limit` and leave `LIMIT` blank for all articles.
+- Export only: run from the repository root and pass the configured directory explicitly (standalone `scrape.py` does not read `ARTICLES_DIR` itself):
+  ```sh
+  ARTICLES_DIR="$(python -c 'import os; from dotenv import load_dotenv; load_dotenv(".env"); print(os.getenv("ARTICLES_DIR", "articles"))')"
+  python scrape.py --limit 30 --out "$ARTICLES_DIR"
+  ```
+- Relative `ARTICLES_DIR` paths resolve against the current working directory. Keep custom generated directories gitignored.
 - Network: set a `User-Agent`, timeouts, retry with backoff, honor `429` + `Retry-After`.
 - Idempotent: re-running overwrites cleanly, no duplicates.
 - Logging: one line per article (id, slug, bytes). Summary at end: fetched / skipped / failed.
@@ -72,9 +78,11 @@ Requirements:
 
 ## Definition of done
 
-- [ ] `ls out | wc -l` ≥ 30
+Use the shell variable `ARTICLES_DIR` loaded by the export-only command above.
+
+- [ ] `find "$ARTICLES_DIR" -maxdepth 1 -type f -name '*.md' | wc -l` ≥ 30
 - [ ] Spot-check 3 files: headings intact, code fenced, relative links untouched, no nav/footer text
-- [ ] `grep -L '^# ' out/*.md` returns nothing (every file has a title)
-- [ ] `grep -l '<div\|<span\|<script' out/*.md` returns nothing (no leftover HTML)
+- [ ] `grep -L '^# ' "$ARTICLES_DIR"/*.md` returns nothing (every file has a title)
+- [ ] `grep -l '<div\|<span\|<script' "$ARTICLES_DIR"/*.md` returns nothing (no leftover HTML)
 - [ ] Tests pass
 - [ ] README: setup, run command, design decisions, known limitations
